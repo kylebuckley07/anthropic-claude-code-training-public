@@ -5,9 +5,8 @@ import { formatMoney } from "./money"
 /**
  * CSV export for the payments table.
  *
- * The column set is fixed. Ops has asked for control over it — that is
- * NWP-101 — but today everyone gets every column, including the card
- * last four, whether or not the file is going to a merchant.
+ * Ops chooses the columns (NWP-101). The card last four is left out unless
+ * someone asks for it, because most of these files go to merchants.
  */
 
 export const EXPORT_COLUMNS = [
@@ -24,6 +23,41 @@ export const EXPORT_COLUMNS = [
 ] as const
 
 export type ExportColumn = (typeof EXPORT_COLUMNS)[number]
+
+/** What an export contains when nobody picked columns: everything but the card last four. */
+export const DEFAULT_EXPORT_COLUMNS: readonly ExportColumn[] = EXPORT_COLUMNS.filter(
+  (column) => column !== "last4",
+)
+
+export type ParsedColumns =
+  | { ok: true; columns: ExportColumn[] }
+  | { ok: false; error: string }
+
+/**
+ * Column names arrive from the client. Check each one against the allowlist,
+ * keep the order asked for, and drop repeats. A missing param means the
+ * default set; an empty or unknown one is rejected rather than guessed at.
+ */
+export function parseExportColumns(param: string | null): ParsedColumns {
+  if (param === null) return { ok: true, columns: [...DEFAULT_EXPORT_COLUMNS] }
+
+  const requested = param
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean)
+  if (requested.length === 0) {
+    return { ok: false, error: "Choose at least one column to export." }
+  }
+
+  const unknown = requested.filter(
+    (name) => !EXPORT_COLUMNS.includes(name as ExportColumn),
+  )
+  if (unknown.length > 0) {
+    return { ok: false, error: "One or more columns are not available for export." }
+  }
+
+  return { ok: true, columns: [...new Set(requested as ExportColumn[])] }
+}
 
 function escapeCell(value: string): string {
   if (/[",\n]/.test(value)) return `"${value.replace(/"/g, '""')}"`
@@ -66,6 +100,11 @@ export function toCsv(
   return [header, ...rows].join("\n")
 }
 
-export function exportFilename(date = new Date()): string {
-  return `payments-${date.toISOString().slice(0, 10)}.csv`
+/**
+ * The label must come from a checked value (a scope or an allowlisted
+ * status), never from free text such as a search term.
+ */
+export function exportFilename(date = new Date(), label?: string): string {
+  const day = date.toISOString().slice(0, 10)
+  return label ? `payments-${label}-${day}.csv` : `payments-${day}.csv`
 }
